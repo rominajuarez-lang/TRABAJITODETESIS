@@ -80,47 +80,156 @@ def construir_resumen_mejores(df_comparacion: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def calcular_metricas_ejecutivas(
-    df_real: pd.DataFrame,
-    df_tvu: pd.DataFrame,
-    kpis_tvu: dict,
-    resumen_mejores: pd.DataFrame,
-):
-    total_skus_demanda = df_real["product_id"].nunique() if not df_real.empty else 0
-    total_skus_modelados = len(resumen_mejores) if not resumen_mejores.empty else 0
+def normalizar_columnas_forecast_empresa(df: pd.DataFrame) -> pd.DataFrame:
+    """Estandariza una hoja de forecast comercial si existe en el Excel."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["date", "product_id", "forecast_company"])
 
-    valor_tvu_riesgo = float(kpis_tvu.get("valor_riesgo", 0))
-    stock_tvu_riesgo = float(kpis_tvu.get("stock_riesgo", 0))
-    skus_riesgo = int(kpis_tvu.get("sku_alto", 0)) + int(kpis_tvu.get("sku_medio", 0))
+    df = df.copy()
+    df.columns = [str(c).strip().lower() for c in df.columns]
 
-    wmape_promedio = resumen_mejores["wMAPE"].mean() if not resumen_mejores.empty else 0
-    bias_promedio = resumen_mejores["Bias"].mean() if not resumen_mejores.empty else 0
-    modelo_dominante = (
-        resumen_mejores["Mejor método"].mode().iloc[0]
-        if not resumen_mejores.empty
-        else "Sin datos"
+    alias = {
+        "fecha": "date",
+        "mes": "date",
+        "periodo": "date",
+        "producto": "product_id",
+        "sku": "product_id",
+        "grupo de demanda": "product_id",
+        "id_producto": "product_id",
+        "codigo": "product_id",
+        "código": "product_id",
+        "forecast": "forecast_company",
+        "forecast empresa": "forecast_company",
+        "forecast_empresa": "forecast_company",
+        "forecast comercial": "forecast_company",
+        "forecast_comercial": "forecast_company",
+        "pronostico empresa": "forecast_company",
+        "pronóstico empresa": "forecast_company",
+        "pronostico_empresa": "forecast_company",
+        "forecast_company": "forecast_company",
+    }
+    df = df.rename(columns={c: alias.get(c, c) for c in df.columns})
+
+    requeridas = ["date", "product_id", "forecast_company"]
+    if any(c not in df.columns for c in requeridas):
+        return pd.DataFrame(columns=requeridas)
+
+    df = df[requeridas].copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["product_id"] = df["product_id"].astype(str).str.strip()
+    df["forecast_company"] = pd.to_numeric(df["forecast_company"], errors="coerce").fillna(0)
+    df = df.dropna(subset=["date"])
+    df["date"] = df["date"].dt.to_period("M").dt.to_timestamp()
+
+    return (
+        df.groupby(["product_id", "date"], as_index=False)["forecast_company"]
+        .sum()
+        .sort_values(["product_id", "date"])
+        .reset_index(drop=True)
     )
 
-    error_mensual_valorizado = 0.0
-    if not resumen_mejores.empty and not df_tvu.empty:
-        costos = df_tvu[["product_id", "unit_value"]].drop_duplicates("product_id")
-        costos = costos.rename(columns={"product_id": "Producto"})
-        tmp = resumen_mejores.merge(costos, on="Producto", how="left")
-        tmp["unit_value"] = pd.to_numeric(tmp["unit_value"], errors="coerce").fillna(0)
-        tmp["error_valorizado_estimado"] = tmp["MAE"] * tmp["unit_value"]
-        error_mensual_valorizado = float(tmp["error_valorizado_estimado"].sum())
 
-    return {
-        "total_skus_demanda": total_skus_demanda,
-        "total_skus_modelados": total_skus_modelados,
-        "valor_tvu_riesgo": valor_tvu_riesgo,
-        "stock_tvu_riesgo": stock_tvu_riesgo,
-        "skus_riesgo": skus_riesgo,
-        "wmape_promedio": wmape_promedio,
-        "bias_promedio": bias_promedio,
-        "modelo_dominante": modelo_dominante,
-        "error_mensual_valorizado": error_mensual_valorizado,
-    }
+def calcular_ahorro_forecast_2025(
+    df_forecast_auto: pd.DataFrame,
+    df_forecast_empresa: pd.DataFrame,
+    df_tvu: pd.DataFrame,
+):
+    """
+    Calcula ahorro potencial económico del forecast propuesto vs forecast comercial.
+    Requiere forecast comercial 2025 y costo unitario desde TVU/Datos.
+    """
+    columnas_resumen = [
+        "Producto",
+        "Ahorro potencial S/",
+        "Error empresa S/",
+        "Error propuesta S/",
+        "wMAPE empresa",
+        "wMAPE propuesta",
+    ]
+
+    if df_forecast_auto.empty or df_forecast_empresa.empty or df_tvu.empty:
+        return pd.DataFrame(columns=columnas_resumen), 0.0, 0.0
+
+    df_prop = df_forecast_auto[
+        (df_forecast_auto.get("tipo_periodo", "Histórico") == "Histórico")
+        & (pd.to_datetime(df_forecast_auto["date"]).dt.year == 2025)
+    ].copy()
+
+    if df_prop.empty or "demand_forecast" not in df_prop.columns:
+        return pd.DataFrame(columns=columnas_resumen), 0.0, 0.0
+
+    df_emp = df_forecast_empresa[pd.to_datetime(df_forecast_empresa["date"]).dt.year == 2025].copy()
+
+    costos = df_tvu[["product_id", "unit_value"]].drop_duplicates("product_id").copy()
+    costos["product_id"] = costos["product_id"].astype(str).str.strip()
+
+    df = df_prop.merge(df_emp, on=["product_id", "date"], how="inner")
+    df = df.merge(costos, on="product_id", how="left")
+    df["unit_value"] = pd.to_numeric(df["unit_value"], errors="coerce").fillna(0)
+
+    if df.empty:
+        return pd.DataFrame(columns=columnas_resumen), 0.0, 0.0
+
+    filas = []
+    for producto, sub in df.groupby("product_id"):
+        real = pd.to_numeric(sub["demand_real"], errors="coerce").fillna(0).to_numpy(float)
+        empresa = pd.to_numeric(sub["forecast_company"], errors="coerce").fillna(0).to_numpy(float)
+        propuesta = pd.to_numeric(sub["demand_forecast"], errors="coerce").fillna(0).to_numpy(float)
+        costo = pd.to_numeric(sub["unit_value"], errors="coerce").fillna(0).to_numpy(float)
+
+        error_empresa_soles = float((abs(empresa - real) * costo).sum())
+        error_propuesta_soles = float((abs(propuesta - real) * costo).sum())
+        ahorro = error_empresa_soles - error_propuesta_soles
+
+        suma_real = real.sum()
+        wmape_emp = float(abs(empresa - real).sum() / suma_real) if suma_real > 0 else 0.0
+        wmape_prop = float(abs(propuesta - real).sum() / suma_real) if suma_real > 0 else 0.0
+
+        filas.append(
+            {
+                "Producto": producto,
+                "Ahorro potencial S/": ahorro,
+                "Error empresa S/": error_empresa_soles,
+                "Error propuesta S/": error_propuesta_soles,
+                "wMAPE empresa": wmape_emp,
+                "wMAPE propuesta": wmape_prop,
+            }
+        )
+
+    resumen = pd.DataFrame(filas)
+    ahorro_total = float(resumen["Ahorro potencial S/"].sum()) if not resumen.empty else 0.0
+    error_empresa_total = float(resumen["Error empresa S/"].sum()) if not resumen.empty else 0.0
+    error_propuesta_total = float(resumen["Error propuesta S/"].sum()) if not resumen.empty else 0.0
+    reduccion_error = (
+        (error_empresa_total - error_propuesta_total) / error_empresa_total
+        if error_empresa_total > 0
+        else 0.0
+    )
+
+    return resumen, ahorro_total, reduccion_error
+
+
+def obtener_resumen_tvu_ejecutivo(df_tvu: pd.DataFrame):
+    if df_tvu.empty:
+        return pd.DataFrame(), 0.0, 0.0, 0
+
+    df_riesgo = df_tvu[df_tvu["riesgo_tvu"].isin(["🔴 Alto", "🟡 Medio"])].copy()
+    valor_riesgo = float(df_riesgo["valor_en_riesgo"].sum()) if not df_riesgo.empty else 0.0
+    stock_riesgo = float(df_riesgo["initial_stock"].sum()) if not df_riesgo.empty else 0.0
+    skus_riesgo = int(df_riesgo["product_id"].nunique()) if not df_riesgo.empty else 0
+
+    resumen_riesgo = (
+        df_riesgo.groupby("riesgo_tvu", as_index=False)
+        .agg(
+            cantidad_sku=("product_id", "nunique"),
+            stock_total=("initial_stock", "sum"),
+            valor_en_riesgo=("valor_en_riesgo", "sum"),
+        )
+        if not df_riesgo.empty
+        else pd.DataFrame(columns=["riesgo_tvu", "cantidad_sku", "stock_total", "valor_en_riesgo"])
+    )
+
+    return resumen_riesgo, valor_riesgo, stock_riesgo, skus_riesgo
 
 
 def mostrar_dashboard_ejecutivo(
@@ -129,25 +238,82 @@ def mostrar_dashboard_ejecutivo(
     resumen_vencimientos: pd.DataFrame,
     kpis_tvu: dict,
     df_comparacion: pd.DataFrame,
+    resumen_ahorro_forecast: pd.DataFrame,
+    ahorro_total_forecast: float,
+    reduccion_error_forecast: float,
 ):
     resumen_mejores = construir_resumen_mejores(df_comparacion)
-    metricas = calcular_metricas_ejecutivas(df_real, df_tvu, kpis_tvu, resumen_mejores)
+    resumen_tvu_riesgo, valor_tvu_riesgo, stock_tvu_riesgo, skus_tvu_riesgo = obtener_resumen_tvu_ejecutivo(df_tvu)
+
+    total_skus = df_real["product_id"].nunique() if not df_real.empty else 0
+    modelo_mas_usado = (
+        resumen_mejores["Mejor método"].mode().iloc[0]
+        if not resumen_mejores.empty
+        else "Sin datos"
+    )
+    impacto_identificado = valor_tvu_riesgo + ahorro_total_forecast
 
     st.title("📊 Dashboard Ejecutivo")
-    st.caption("Vista general del portafolio: demanda, pronóstico, riesgo de vencimiento y criticidad económica.")
+    st.caption("Vista general del portafolio: oportunidades de forecast, riesgo de vencimiento y comportamiento de modelos.")
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("SKUs con demanda", f"{metricas['total_skus_demanda']:,}")
-    c2.metric("SKUs modelados", f"{metricas['total_skus_modelados']:,}")
-    c3.metric("Modelo dominante", metricas["modelo_dominante"])
-    c4.metric("wMAPE promedio", f"{metricas['wmape_promedio']:.2%}")
-    c5.metric("Valor en riesgo", f"S/ {metricas['valor_tvu_riesgo']:,.0f}")
+    c1.metric("SKU evaluados", f"{total_skus:,}")
+    c2.metric("Ahorro potencial forecast", f"S/ {ahorro_total_forecast:,.0f}")
+    c3.metric("Valor en riesgo TVU", f"S/ {valor_tvu_riesgo:,.0f}")
+    c4.metric("Impacto identificado", f"S/ {impacto_identificado:,.0f}")
+    c5.metric("Modelo más usado", modelo_mas_usado)
 
     st.divider()
 
-    col_a, col_b = st.columns([1.15, 1])
+    col1, col2 = st.columns([1.25, 1])
 
-    with col_a:
+    with col1:
+        st.subheader("💰 Top 10 ahorro potencial por forecast")
+        if resumen_ahorro_forecast.empty or ahorro_total_forecast == 0:
+            st.info(
+                "No se detectó una hoja de forecast comercial 2025 o no hay ahorro calculado. "
+                "Para activar este gráfico, el Excel debe incluir una hoja 'Forecast_Comercial' con date, product_id y forecast_company."
+            )
+        else:
+            top_ahorro = resumen_ahorro_forecast.sort_values(
+                "Ahorro potencial S/",
+                ascending=False,
+            ).head(10)
+            fig_ahorro = px.bar(
+                top_ahorro,
+                x="Ahorro potencial S/",
+                y="Producto",
+                orientation="h",
+                title="SKUs con mayor mejora económica estimada",
+                labels={"Ahorro potencial S/": "Ahorro potencial (S/)", "Producto": "Producto"},
+            )
+            fig_ahorro.update_layout(
+                yaxis={"categoryorder": "total ascending"},
+                margin=dict(l=20, r=20, t=50, b=20),
+            )
+            st.plotly_chart(fig_ahorro, use_container_width=True)
+
+    with col2:
+        st.subheader("⚠️ Riesgo económico por vencimiento")
+        if resumen_tvu_riesgo.empty:
+            st.info("No hay productos en riesgo alto o medio.")
+        else:
+            fig_tvu = px.pie(
+                resumen_tvu_riesgo,
+                names="riesgo_tvu",
+                values="valor_en_riesgo",
+                hole=0.45,
+                title="Valor en riesgo: alto y medio",
+            )
+            fig_tvu.update_traces(textposition="inside", textinfo="percent+label")
+            fig_tvu.update_layout(margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig_tvu, use_container_width=True)
+
+    st.divider()
+
+    col3, col4 = st.columns([1, 1])
+
+    with col3:
         st.subheader("📈 Distribución de modelos ganadores")
         if resumen_mejores.empty:
             st.info("No hay información de métodos ganadores disponible.")
@@ -163,64 +329,17 @@ def mostrar_dashboard_ejecutivo(
                 color_discrete_sequence=px.colors.qualitative.Set2,
             )
             fig_modelos.update_traces(textposition="inside", textinfo="percent+label")
-            fig_modelos.update_layout(margin=dict(t=45, b=0, l=0, r=0))
+            fig_modelos.update_layout(margin=dict(t=50, b=0, l=0, r=0))
             st.plotly_chart(fig_modelos, use_container_width=True)
 
-    with col_b:
-        st.subheader("⚠️ Riesgo de vencimiento")
-        if df_tvu.empty or resumen_vencimientos.empty:
-            st.info("No hay información TVU disponible.")
-        else:
-            st.plotly_chart(
-                grafico_cantidad_riesgo(resumen_vencimientos),
-                use_container_width=True,
-            )
-
-    st.divider()
-
-    col_c, col_d = st.columns([1, 1])
-
-    with col_c:
-        st.subheader("💰 Valor económico comprometido")
-        if df_tvu.empty or resumen_vencimientos.empty:
-            st.info("No hay información económica TVU disponible.")
-        else:
-            st.plotly_chart(
-                grafico_valor_riesgo(resumen_vencimientos),
-                use_container_width=True,
-            )
-
-    with col_d:
-        st.subheader("🏆 Top 10 productos críticos")
-        if df_tvu.empty:
-            st.info("No hay productos para mostrar.")
-        else:
-            top_tvu = (
-                df_tvu[df_tvu["riesgo_tvu"].isin(["🔴 Alto", "🟡 Medio"])]
-                .sort_values("valor_en_riesgo", ascending=False)
-                .head(10)
-            )
-            if top_tvu.empty:
-                st.success("No hay productos en riesgo alto o medio.")
-            else:
-                st.dataframe(
-                    formatear_tvu(top_tvu),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-    st.divider()
-
-    st.subheader("📌 Lectura ejecutiva")
-    col_e1, col_e2, col_e3 = st.columns(3)
-    col_e1.metric("SKUs en riesgo alto/medio", f"{metricas['skus_riesgo']:,}")
-    col_e2.metric("Stock en riesgo", f"{metricas['stock_tvu_riesgo']:,.0f}")
-    col_e3.metric("Error mensual valorizado estimado", f"S/ {metricas['error_mensual_valorizado']:,.0f}")
-
-    st.info(
-        "Este resumen muestra indicadores agregados. Para revisar el detalle por SKU, utiliza los módulos "
-        "'Pronósticos e Inventarios' y 'TVU - Productos próximos a vencer'."
-    )
+    with col4:
+        st.subheader("📌 Lectura ejecutiva")
+        st.metric("Reducción del error forecast", f"{reduccion_error_forecast:.2%}")
+        st.metric("SKUs con riesgo alto/medio", f"{skus_tvu_riesgo:,}")
+        st.metric("Stock en riesgo", f"{stock_tvu_riesgo:,.0f}")
+        st.info(
+            "Este módulo muestra solo la vista consolidada. El detalle por producto se revisa en 'Pronósticos e Inventarios' y 'TVU'."
+        )
 
 
 # =========================================================
@@ -249,6 +368,7 @@ if modo_datos == "Generar datos sintéticos":
     seed = st.sidebar.number_input("Semilla", min_value=1, max_value=9999, value=42)
     df_real = generar_demanda_sintetica(n_productos=n_productos, meses=meses, seed=seed)
     df_parametros = pd.DataFrame()
+    df_forecast_empresa = pd.DataFrame(columns=["date", "product_id", "forecast_company"])
 else:
     archivo = st.sidebar.file_uploader("Sube tu archivo Excel unificado", type=["xlsx", "xls"])
     if archivo is None:
@@ -293,6 +413,19 @@ else:
         else:
             st.error("⚠️ El archivo Excel no tiene una pestaña llamada 'Datos'. Por favor, agrégala y vuelve a subir el archivo.")
             st.stop()
+
+        # Hoja opcional para calcular el ahorro potencial del forecast comercial vs propuesto.
+        # Estructura esperada: date, product_id, forecast_company.
+        if "Forecast_Comercial" in xls.sheet_names:
+            df_forecast_empresa = normalizar_columnas_forecast_empresa(
+                pd.read_excel(xls, sheet_name="Forecast_Comercial")
+            )
+        elif "Forecast Comercial" in xls.sheet_names:
+            df_forecast_empresa = normalizar_columnas_forecast_empresa(
+                pd.read_excel(xls, sheet_name="Forecast Comercial")
+            )
+        else:
+            df_forecast_empresa = pd.DataFrame(columns=["date", "product_id", "forecast_company"])
 
     except Exception as e:
         st.error(f"Error procesando el archivo: {str(e)}")
@@ -375,6 +508,11 @@ if modulo == "⚠️ TVU - Productos próximos a vencer":
 # =========================================================
 fecha_fin_default = pd.Timestamp("2026-12-01")
 df_forecast_auto, df_comparacion = ejecutar_forecast_cache(df_real, fecha_fin_default)
+resumen_ahorro_forecast, ahorro_total_forecast, reduccion_error_forecast = calcular_ahorro_forecast_2025(
+    df_forecast_auto=df_forecast_auto,
+    df_forecast_empresa=df_forecast_empresa,
+    df_tvu=df_tvu,
+)
 
 if modulo == "📊 Vista General Ejecutiva":
     mostrar_dashboard_ejecutivo(
@@ -383,6 +521,9 @@ if modulo == "📊 Vista General Ejecutiva":
         resumen_vencimientos=resumen_vencimientos,
         kpis_tvu=kpis_tvu,
         df_comparacion=df_comparacion,
+        resumen_ahorro_forecast=resumen_ahorro_forecast,
+        ahorro_total_forecast=ahorro_total_forecast,
+        reduccion_error_forecast=reduccion_error_forecast,
     )
     st.stop()
 
