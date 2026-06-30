@@ -32,6 +32,16 @@ st.caption(
 # =========================================================
 # SIDEBAR - CARGA DE DATOS ÚNICA
 # =========================================================
+
+st.sidebar.header("Módulo")
+
+modulo = st.sidebar.radio(
+    "Seleccione una herramienta",
+    [
+        "📈 Pronósticos e Inventarios",
+        "⚠️ TVU - Productos próximos a vencer"
+    ]
+)
 st.sidebar.header("1. Carga de datos")
 modo_datos = st.sidebar.radio("Modo de datos", ["Generar datos sintéticos", "Subir Excel (Pestañas: Demanda y Datos)"])
 
@@ -88,6 +98,76 @@ else:
 # =========================================================
 df_tvu = preparar_tvu(df_parametros)
 resumen_vencimientos, kpis_tvu = resumen_tvu(df_tvu)
+if modulo == "⚠️ TVU - Productos próximos a vencer":
+
+    st.subheader("⚠️ Infografía TVU: Productos próximos a vencer")
+
+    st.write(
+        "Clasificación de productos según los meses restantes para su vencimiento. "
+        "Riesgo alto: hasta 3 meses; riesgo medio: más de 3 y hasta 6 meses; "
+        "riesgo bajo: más de 6 meses."
+    )
+
+    if df_tvu.empty:
+        st.warning(
+            "No se pudo construir la infografía TVU. Verifica que la hoja 'Datos' tenga columnas como: "
+            "GRUPO DE DEMANDA, initial_stock, tvu_months y unit_value."
+        )
+    else:
+        col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+
+        col_t1.metric("🔴 SKUs riesgo alto", f"{kpis_tvu['sku_alto']:,}")
+        col_t2.metric("🟡 SKUs riesgo medio", f"{kpis_tvu['sku_medio']:,}")
+        col_t3.metric("Stock en riesgo", f"{kpis_tvu['stock_riesgo']:,.0f}")
+        col_t4.metric("Valor en riesgo", f"S/ {kpis_tvu['valor_riesgo']:,.2f}")
+
+        st.info(f"SKU más crítico: **{kpis_tvu['sku_critico']}**")
+
+        col_g1, col_g2 = st.columns(2)
+
+        with col_g1:
+            st.plotly_chart(
+                grafico_cantidad_riesgo(resumen_vencimientos),
+                use_container_width=True
+            )
+
+        with col_g2:
+            st.plotly_chart(
+                grafico_valor_riesgo(resumen_vencimientos),
+                use_container_width=True
+            )
+
+        st.markdown("### 🚨 Top 10 productos más críticos")
+
+        top_10 = df_tvu[df_tvu["riesgo_tvu"].isin(["🔴 Alto", "🟡 Medio"])].head(10)
+
+        if top_10.empty:
+            st.success("No hay productos en riesgo alto o medio.")
+        else:
+            st.dataframe(
+                formatear_tvu(top_10),
+                use_container_width=True,
+                hide_index=True
+            )
+
+        st.markdown("### 📋 Detalle completo TVU")
+
+        st.dataframe(
+            formatear_tvu(df_tvu),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.download_button(
+            label="📥 Descargar TVU (CSV)",
+            data=df_tvu.to_csv(index=False).encode("utf-8"),
+            file_name="reporte_tvu_vencimientos.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    st.stop()
+
 
 # =========================================================
 # PRONÓSTICO MENSUAL
@@ -170,10 +250,9 @@ col5.metric("Costo total", f"S/ {kpis['total_cost']:,.2f}")
 
 st.divider()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🏆 Mejor método",
     "📊 Datos y pronóstico",
-    "⚠️ TVU",
     "📦 Simulación",
     "🎯 Optimización",
     "📋 Tablas",
@@ -331,65 +410,9 @@ with tab2:
         hide_index=True
     )
 
+
+
 with tab3:
-    st.subheader("⚠️ Infografía TVU: Productos próximos a vencer")
-
-    st.write(
-        "Clasificación de productos según los meses restantes para su vencimiento. "
-        "Riesgo alto: hasta 3 meses; riesgo medio: más de 3 y hasta 6 meses; "
-        "riesgo bajo: más de 6 meses."
-    )
-
-    if df_tvu.empty:
-        st.warning(
-            "No se pudo construir la infografía TVU. Verifica que la hoja 'Datos' tenga columnas como: "
-            "GRUPO DE DEMANDA, initial_stock, tvu_months y unit_value."
-        )
-    else:
-        col_t1, col_t2, col_t3, col_t4 = st.columns(4)
-
-        col_t1.metric("🔴 SKUs riesgo alto", f"{kpis_tvu['sku_alto']:,}")
-        col_t2.metric("🟡 SKUs riesgo medio", f"{kpis_tvu['sku_medio']:,}")
-        col_t3.metric("Stock en riesgo", f"{kpis_tvu['stock_riesgo']:,.0f}")
-        col_t4.metric("Valor en riesgo", f"S/ {kpis_tvu['valor_riesgo']:,.2f}")
-
-        st.info(f"SKU más crítico: **{kpis_tvu['sku_critico']}**")
-
-        col_g1, col_g2 = st.columns(2)
-
-        with col_g1:
-            st.plotly_chart(
-                grafico_cantidad_riesgo(resumen_vencimientos),
-                use_container_width=True
-            )
-
-        with col_g2:
-            st.plotly_chart(
-                grafico_valor_riesgo(resumen_vencimientos),
-                use_container_width=True
-            )
-
-        st.markdown("### 🚨 Top 10 productos más críticos")
-
-        top_10 = df_tvu[df_tvu["riesgo_tvu"].isin(["🔴 Alto", "🟡 Medio"])].head(10)
-
-        if top_10.empty:
-            st.success("No hay productos en riesgo alto o medio.")
-        else:
-            st.dataframe(
-                formatear_tvu(top_10),
-                use_container_width=True,
-                hide_index=True
-            )
-
-        st.markdown("### 📋 Detalle completo TVU")
-        st.dataframe(
-            formatear_tvu(df_tvu),
-            use_container_width=True,
-            hide_index=True
-        )
-
-with tab4:
     st.subheader("📦 Simulación Dinámica de Inventario")
     st.write("Evolución del stock físico frente a la demanda y generación de órdenes de compra según la política seleccionada.")
 
@@ -428,7 +451,7 @@ with tab4:
     # Resaltar el Costo Total
     st.info(f"**Costo Total de la Política Actual:** S/ {kpis['total_cost']:,.2f}")
 
-with tab5:
+with tab4:
     st.subheader("🎯 Optimización Financiera del Stock de Seguridad")
     st.write(
         "Análisis de sensibilidad (Trade-off) para encontrar el equilibrio exacto entre "
@@ -480,7 +503,7 @@ with tab5:
         hide_index=True
     )
     
-with tab6:
+with tab5:
     st.subheader("📋 Tablas de Datos y Reportes")
     st.write("Registros detallados de las proyecciones y simulaciones, formateados para exportación y análisis externo.")
 
