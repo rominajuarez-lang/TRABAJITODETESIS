@@ -729,9 +729,7 @@ if modulo == "📊 Vista General Ejecutiva":
 
     st.divider()
 
-    col_a, col_b = st.columns(2)
-
-    with col_a:
+    st.subheader("📈 Ahorro potencial por forecast")
         st.subheader("📈 Ahorro potencial por forecast")
 
         if df_ahorro_forecast.empty:
@@ -774,16 +772,14 @@ if modulo == "📊 Vista General Ejecutiva":
                 hide_index=True,
             )
 
-    with col_b:
-        st.subheader("⚠️ Valor en riesgo por vencimiento")
-
-        if resumen_vencimientos.empty or valor_tvu_riesgo <= 0:
-            st.info("No hay productos en riesgo alto o medio.")
-        else:
-            st.plotly_chart(
-                grafico_tvu_alto_medio(resumen_vencimientos),
-                use_container_width=True,
-            )
+    st.markdown("### ⚠️ Valor en riesgo por vencimiento")
+    if resumen_vencimientos.empty or valor_tvu_riesgo <= 0:
+        st.info("No hay productos en riesgo alto o medio.")
+    else:
+        st.plotly_chart(
+            grafico_tvu_alto_medio(resumen_vencimientos),
+            use_container_width=True,
+        )
 
     st.divider()
 
@@ -908,23 +904,6 @@ with tab1:
         "MAE",
     ]].rename(columns={"Método": "Mejor método"})
 
-    if not df_ahorro_forecast.empty:
-        ahorro_por_producto = df_ahorro_forecast[[
-            "Producto",
-            "Ahorro potencial S/",
-        ]].copy()
-
-        resumen_mejores = resumen_mejores.merge(
-            ahorro_por_producto,
-            on="Producto",
-            how="left",
-        )
-        resumen_mejores = resumen_mejores.rename(
-            columns={"Ahorro potencial S/": "Ahorro Potencial (S/)"}
-        )
-    else:
-        resumen_mejores["Ahorro Potencial (S/)"] = 0.0
-
     col_graf, col_tabla = st.columns([1.2, 1])
 
     conteo_metodos = resumen_mejores["Mejor método"].value_counts().reset_index()
@@ -1003,10 +982,6 @@ with tab1:
             "MAE": st.column_config.NumberColumn(
                 "MAE (Unidades)",
                 format="%.2f",
-            ),
-            "Ahorro Potencial (S/)": st.column_config.NumberColumn(
-                "Ahorro Potencial (S/)",
-                format="S/ %,.2f",
             ),
         },
     )
