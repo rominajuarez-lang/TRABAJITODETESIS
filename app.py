@@ -38,6 +38,7 @@ st.sidebar.header("Módulo")
 modulo = st.sidebar.radio(
     "Seleccione una herramienta",
     [
+        "📊 Vista General Ejecutiva",
         "📈 Pronósticos e Inventarios",
         "⚠️ TVU - Productos próximos a vencer"
     ]
@@ -168,6 +169,123 @@ if modulo == "⚠️ TVU - Productos próximos a vencer":
 
     st.stop()
 
+if modulo=="📊 Vista General Ejecutiva":
+
+    st.title("📊 Dashboard Ejecutivo")
+
+    st.caption(
+        "Resumen financiero y operativo del portafolio."
+    )
+
+    c1,c2,c3,c4,c5=st.columns(5)
+
+    c1.metric(
+        "SKU evaluados",
+        f"{total_skus:,}"
+    )
+
+    c2.metric(
+        "Valor en riesgo TVU",
+        f"S/ {valor_tvu:,.0f}"
+    )
+
+    c3.metric(
+        "Ahorro Forecast",
+        f"S/ {ahorro_total:,.0f}"
+    )
+
+    c4.metric(
+        "Reducción Error",
+        f"{reduccion_error:.1f}%"
+    )
+
+    c5.metric(
+        "Impacto Económico",
+        f"S/ {valor_tvu+ahorro_total:,.0f}"
+    )
+
+    st.divider()
+       st.subheader("💰 Riesgo económico por vencimiento")
+
+    col1,col2=st.columns(2)
+
+    with col1:
+
+        st.metric(
+            "🔴 Riesgo Alto",
+            f"S/ {valor_alto:,.0f}"
+        )
+
+        st.metric(
+            "🟡 Riesgo Medio",
+            f"S/ {valor_medio:,.0f}"
+        )
+
+        st.metric(
+            "🟢 Riesgo Bajo",
+            f"S/ {valor_bajo:,.0f}"
+        )
+
+    with col2:
+
+        st.plotly_chart(
+            grafico_valor_riesgo(
+                resumen_vencimientos
+            ),
+            use_container_width=True
+        )
+            st.divider()
+
+    st.subheader("🏆 Top 10 productos con mayor riesgo económico")
+
+    top=df_tvu.sort_values(
+        "valor_en_riesgo",
+        ascending=False
+    ).head(10)
+
+    st.dataframe(
+        formatear_tvu(top),
+        use_container_width=True,
+        hide_index=True
+    )
+    st.divider()
+
+    st.subheader("📈 Distribución del riesgo")
+
+    st.plotly_chart(
+        grafico_cantidad_riesgo(
+            resumen_vencimientos
+        ),
+        use_container_width=True
+    )
+    st.stop()
+
+
+
+
+# ======================================================
+# RESUMEN EJECUTIVO
+# ======================================================
+
+total_skus = len(df_tvu)
+
+valor_tvu = df_tvu["valor_en_riesgo"].sum()
+
+valor_alto = df_tvu.loc[
+    df_tvu["riesgo_tvu"]=="🔴 Alto",
+    "valor_en_riesgo"
+].sum()
+
+valor_medio = df_tvu.loc[
+    df_tvu["riesgo_tvu"]=="🟡 Medio",
+    "valor_en_riesgo"
+].sum()
+
+valor_bajo = df_tvu.loc[
+    df_tvu["riesgo_tvu"]=="🟢 Bajo",
+    "valor_en_riesgo"
+].sum()
+
 
 # =========================================================
 # PRONÓSTICO MENSUAL
@@ -190,6 +308,30 @@ df_forecast_auto, df_comparacion = generar_forecast_mejor_por_producto(
     df_real, fecha_fin_pronostico=fecha_fin_pronostico
 )
 
+# ==========================================
+# RESUMEN FORECAST
+# ==========================================
+
+ahorro_total = 0
+
+if "Ahorro potencial" in df_comparacion.columns:
+    ahorro_total = df_comparacion["Ahorro potencial"].sum()
+
+reduccion_error = 0
+
+if "Error valorizado empresa" in df_comparacion.columns:
+
+    error_empresa = df_comparacion["Error valorizado empresa"].sum()
+
+    error_propuesta = df_comparacion["Error valorizado propuesta"].sum()
+
+    if error_empresa > 0:
+
+        reduccion_error = (
+            (error_empresa-error_propuesta)
+            /error_empresa
+        )*100
+
 if modo_pronostico == "Manual: elegir un método":
     metodo_manual = st.sidebar.selectbox("Método manual", METODOS_PRONOSTICO)
     df_forecast = generar_forecast(df_real, metodo_manual, fecha_fin_pronostico=fecha_fin_pronostico)
@@ -208,6 +350,9 @@ if modo_pronostico == "Automático: mejor método por producto":
     st.sidebar.success(f"Método elegido para {producto_sel}: {mejor_metodo_producto}")
 else:
     st.sidebar.info(f"Mejor método para {producto_sel}: {mejor_metodo_producto}")
+
+
+
 
 # =========================================================
 # POLÍTICA DE INVENTARIO
