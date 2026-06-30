@@ -525,3 +525,9 @@ with tab5:
             mime="text/csv",
             use_container_width=True
         )
+# =========================================================
+# TVU - RIESGO DE VENCIMIENTO
+# =========================================================
+df_tvu = preparar_tvu(df_parametros)
+resumen_vencimientos, kpis_tvu = resumen_tvu(df_tvu)
+
