@@ -294,16 +294,26 @@ def calcular_ahorro_forecast_2025(
 
     return resumen, kpis
 
-def grafico_ahorro_forecast(df_ahorro: pd.DataFrame):
-    top = df_ahorro.copy()
-    top = top.sort_values("Ahorro potencial S/", ascending=False).head(10)
+def grafico_ahorro_forecast(df_ahorro: pd.DataFrame, mostrar: str = "Top 10"):
+    df_plot = df_ahorro.copy()
+    df_plot = df_plot.sort_values("Ahorro potencial S/", ascending=False)
+
+    if mostrar != "Todos":
+        n_top = int(mostrar.replace("Top", "").strip())
+        df_plot = df_plot.head(n_top)
+
+    titulo = (
+        "Todos los SKUs por ahorro potencial"
+        if mostrar == "Todos"
+        else f"{mostrar} SKUs con mayor ahorro potencial"
+    )
 
     fig = px.bar(
-        top,
+        df_plot,
         x="Ahorro potencial S/",
         y="Producto",
         orientation="h",
-        title="Top 10 SKUs con mayor ahorro potencial",
+        title=titulo,
         labels={
             "Ahorro potencial S/": "Ahorro potencial (S/)",
             "Producto": "SKU",
@@ -730,9 +740,38 @@ if modulo == "📊 Vista General Ejecutiva":
                 "Forecast_Comercial con date, product_id y forecast_company, y la hoja Datos debe tener unit_value o unit_cost."
             )
         else:
+            opcion_top_ahorro = st.selectbox(
+                "Mostrar:",
+                options=["Top 10", "Top 20", "Top 30", "Todos"],
+                index=0,
+            )
+
             st.plotly_chart(
-                grafico_ahorro_forecast(df_ahorro_forecast),
+                grafico_ahorro_forecast(df_ahorro_forecast, opcion_top_ahorro),
                 use_container_width=True,
+            )
+
+            tabla_ahorro_forecast = (
+                df_ahorro_forecast[[
+                    "Producto",
+                    "Mejor método",
+                    "Ahorro potencial S/",
+                ]]
+                .copy()
+                .sort_values("Ahorro potencial S/", ascending=False)
+                .rename(columns={
+                    "Producto": "SKU",
+                    "Mejor método": "Método Ganador",
+                    "Ahorro potencial S/": "Ahorro Potencial (S/)",
+                })
+            )
+
+            st.dataframe(
+                tabla_ahorro_forecast.style.format({
+                    "Ahorro Potencial (S/)": "S/ {:,.2f}",
+                }),
+                use_container_width=True,
+                hide_index=True,
             )
 
     with col_b:
@@ -869,6 +908,23 @@ with tab1:
         "MAE",
     ]].rename(columns={"Método": "Mejor método"})
 
+    if not df_ahorro_forecast.empty:
+        ahorro_por_producto = df_ahorro_forecast[[
+            "Producto",
+            "Ahorro potencial S/",
+        ]].copy()
+
+        resumen_mejores = resumen_mejores.merge(
+            ahorro_por_producto,
+            on="Producto",
+            how="left",
+        )
+        resumen_mejores = resumen_mejores.rename(
+            columns={"Ahorro potencial S/": "Ahorro Potencial (S/)"}
+        )
+    else:
+        resumen_mejores["Ahorro Potencial (S/)"] = 0.0
+
     col_graf, col_tabla = st.columns([1.2, 1])
 
     conteo_metodos = resumen_mejores["Mejor método"].value_counts().reset_index()
@@ -947,6 +1003,10 @@ with tab1:
             "MAE": st.column_config.NumberColumn(
                 "MAE (Unidades)",
                 format="%.2f",
+            ),
+            "Ahorro Potencial (S/)": st.column_config.NumberColumn(
+                "Ahorro Potencial (S/)",
+                format="S/ %,.2f",
             ),
         },
     )
