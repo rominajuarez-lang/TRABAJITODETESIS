@@ -11,6 +11,7 @@ from datos import generar_demanda_sintetica, convertir_a_mensual
 from generar_pronosticos import METODOS_PRONOSTICO, generar_forecast, generar_forecast_mejor_por_producto
 from simulacion_inventario import ParametrosInventario, simular_producto, calcular_kpis, optimizar_stock_seguridad, obtener_parametros_producto
 from visualizacion import grafico_forecast, grafico_inventario, grafico_tradeoff, formatear_comparacion
+from tvu import preparar_tvu, resumen_tvu, grafico_cantidad_riesgo, grafico_valor_riesgo, formatear_tvu
 
 warnings.filterwarnings("ignore")
 
